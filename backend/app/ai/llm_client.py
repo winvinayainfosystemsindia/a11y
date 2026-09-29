@@ -1,14 +1,16 @@
 """
-Multi-provider LLM client (Google Gemini + Groq). Every LLM call the agent
+Multi-provider LLM client (Anthropic Claude + Google Gemini + Groq). Every LLM call the agent
 makes (PLAN structured output, judgment calls, REFLECT/LEARN synthesis) goes
 through here - callers never touch httpx or either provider's wire format
 directly. Model IDs are pulled from app/config.py, never hardcoded, so they
 can be swapped per stage without a code change.
 
-A model ID prefixed "groq/" (e.g. "groq/llama-3.3-70b-versatile") is routed
-to Groq's OpenAI-compatible chat/completions endpoint; anything else is
-treated as a Gemini model ID and goes to generateContent. AI_MODEL_FALLBACKS
-can freely mix both - see _generate for the cross-provider fallback chain.
+Routing:
+- A model ID starting with "claude-" or "anthropic/" or "claude/" is routed to Anthropic's Messages API.
+- A model ID prefixed "groq/" (e.g. "groq/llama-3.3-70b-versatile") is routed to Groq's OpenAI-compatible chat/completions endpoint.
+- Anything else is treated as a Gemini model ID and goes to generateContent.
+
+AI_MODEL_FALLBACKS can freely mix all three providers in order (e.g. Claude Sonnet -> Gemini -> Groq).
 """
 from __future__ import annotations
 
@@ -37,21 +39,18 @@ _MAX_NETWORK_RETRIES = 2
 _RETRY_BACKOFF_SECONDS = 2.0
 
 # EXECUTE makes one LLM call per judgment-method plan step, so a single audit
-# run can easily exceed a free-tier quota (e.g. Gemini's 20 requests/window)
-# well before it exceeds any reasonable per-call timeout. A 429 body usually
-# comes with its own suggested wait (Gemini: RetryInfo.retryDelay in the JSON
-# body; Groq/most others: a standard Retry-After header) - honor that instead
-# of guessing, capped so one stuck quota can't hang a run indefinitely.
+# run can easily exceed a free-tier quota well before it exceeds any reasonable
+# per-call timeout. A 429 body usually comes with its own suggested wait
+# (Gemini: RetryInfo.retryDelay in the JSON body; Anthropic/Groq/most others:
+# a standard Retry-After header) - honor that instead of guessing.
 _MAX_RATE_LIMIT_RETRIES = 4
 _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 30.0
 _MAX_RATE_LIMIT_BACKOFF_SECONDS = 90.0
 _RETRY_DELAY_RE = re.compile(r"([\d.]+)\s*s")
 
-# 5xx (transient overload/outage on the provider's side, e.g. Gemini 503
-# "high demand" - no retryDelay is provided for these, unlike 429) - short
-# exponential backoff, since these usually clear within seconds rather than
-# the ~30s+ a quota window needs.
-_RETRYABLE_SERVER_ERROR_STATUSES = {500, 502, 503, 504}
+# 5xx / 529 (transient overload/outage on the provider's side, e.g. Gemini 503
+# "high demand" or Anthropic 529 "overloaded") - short exponential backoff.
+_RETRYABLE_SERVER_ERROR_STATUSES = {500, 502, 503, 504, 529}
 _MAX_SERVER_ERROR_RETRIES = 3
 _SERVER_ERROR_BACKOFF_SECONDS = 5.0
 
@@ -231,16 +230,82 @@ def build_structured_schema(model_cls: Type[BaseModel]) -> StructuredSchema:
 
 
 # ── Provider routing ────────────────────────────────────────────────────
-# "groq/<model>" routes to Groq; anything else is a bare Gemini model ID.
-# Lets AI_MODEL_FALLBACKS mix providers in one ordered list without any
-# other module needing to know which provider actually served a given call.
+# "groq/<model>" routes to Groq; "claude-*" or "claude/*" or "anthropic/*"
+# routes to Anthropic Messages API; anything else is treated as a Gemini model ID.
+# Lets AI_MODEL_FALLBACKS mix all providers in one ordered list.
 
 def _is_groq_model(model: str) -> bool:
     return model.startswith("groq/")
 
 
+def _is_anthropic_model(model: str) -> bool:
+    return model.startswith("claude/") or model.startswith("anthropic/") or model.startswith("claude-")
+
+
 def _strip_provider_prefix(model: str) -> str:
     return model.split("/", 1)[1] if "/" in model else model
+
+
+# ── Anthropic wire format (Messages API) ────────────────────────────────
+
+_anthropic_key_cycle: "cycle[str] | None" = None
+
+
+def _next_anthropic_key() -> str:
+    global _anthropic_key_cycle
+    keys = settings.anthropic_api_keys_list
+    if not keys:
+        raise AIProviderError("ANTHROPIC_API_KEY is not configured")
+    if _anthropic_key_cycle is None:
+        _anthropic_key_cycle = cycle(keys)
+    return next(_anthropic_key_cycle)
+
+
+def _build_anthropic_request(
+    model: str, *, system_prompt: str, user_message: str, schema: StructuredSchema, max_tokens: int,
+) -> tuple[str, dict, dict]:
+    schema_instructions = (
+        "\n\nRespond with a single JSON object only - no markdown fences, no commentary - "
+        f"that strictly matches this JSON Schema:\n{json.dumps(schema.wire_schema)}"
+    )
+    url = f"{settings.ANTHROPIC_BASE_URL}/messages"
+    headers = {
+        "x-api-key": _next_anthropic_key(),
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": min(max_tokens, 20000),
+        "system": system_prompt + schema_instructions,
+        "messages": [
+            {"role": "user", "content": user_message},
+        ],
+    }
+    return url, headers, payload
+
+
+def _extract_text_anthropic(data: dict) -> str:
+    content = data.get("content") or []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                text = block.get("text")
+                if text:
+                    return text
+            elif block.get("type") == "tool_use":
+                input_data = block.get("input")
+                if isinstance(input_data, dict):
+                    return json.dumps(input_data)
+                if isinstance(input_data, str):
+                    return input_data
+    return ""
+
+
+def _check_for_block_anthropic(data: dict) -> None:
+    stop_reason = data.get("stop_reason")
+    if stop_reason == "refusal":
+        raise AIRefusalError("refusal")
 
 
 # ── Gemini wire format ──────────────────────────────────────────────────
@@ -397,8 +462,9 @@ def _check_for_block_groq(data: dict) -> None:
 def _is_truncated(model: str, data: dict) -> bool:
     """True if the model hit its output-token ceiling mid-response - a
     successful (200) call that still can't be used, since the JSON is cut
-    off. Most likely on Groq given _GROQ_MAX_COMPLETION_TOKENS is sized for
-    small judgment-call outputs, not a full PLAN-sized response."""
+    off."""
+    if _is_anthropic_model(model):
+        return data.get("stop_reason") == "max_tokens"
     if _is_groq_model(model):
         choices = data.get("choices") or []
         return bool(choices) and choices[0].get("finish_reason") == "length"
@@ -409,17 +475,12 @@ def _is_truncated(model: str, data: dict) -> bool:
 # Once a model's own retries (429/5xx above) are exhausted, these are the
 # statuses worth switching models over - a different model (possibly a
 # different provider entirely) has its own quota and its own capacity, so a
-# fresh one can succeed where the original is stuck. A hard 4xx (bad
-# request, auth) would fail identically on any model, so those are not
-# fallback triggers - except 413: Groq's small models cap prompt+completion
-# tokens together at 8000-12000 TPM (see _GROQ_MAX_COMPLETION_TOKENS), and a
-# PLAN-sized prompt (a full page's accessibility tree, easily 10k+ tokens)
-# blows straight through that regardless of max_completion_tokens. That's a
-# per-model capacity ceiling, not a malformed request - Gemini's models
-# further down the chain have a much larger context window and handle the
-# same prompt fine, so 413 needs to fall over just like 429/5xx instead of
-# failing the whole run on the first undersized model it hits.
-_MODEL_FALLBACK_TRIGGER_STATUSES = {413, 429, *_RETRYABLE_SERVER_ERROR_STATUSES}
+# fresh one can succeed where the original is stuck.
+# - 404: Model not found / unavailable on this account/provider
+# - 413: Payload too large for provider's TPM cap (e.g. Groq)
+# - 429: Quota exhausted / rate limited
+# - 5xx / 529: Provider outage / overloaded
+_MODEL_FALLBACK_TRIGGER_STATUSES = {404, 413, 429, *_RETRYABLE_SERVER_ERROR_STATUSES}
 
 
 async def _generate_with_model(
@@ -431,14 +492,27 @@ async def _generate_with_model(
     whatever response it ends on (success, or the last failing attempt).
 
     The request is rebuilt on every attempt, not once up front - that's what
-    makes key rotation actually happen per retry (see _next_gemini_key /
-    _next_groq_key, both called from inside build_request())."""
+    makes key rotation actually happen per retry (see _next_anthropic_key /
+    _next_gemini_key / _next_groq_key, called from inside build_request())."""
     real_model = _strip_provider_prefix(model)
+    is_anthropic = _is_anthropic_model(model)
     is_groq = _is_groq_model(model)
-    key_count = len(settings.groq_api_keys_list) if is_groq else len(settings.gemini_api_keys_list)
+    if is_anthropic:
+        key_count = len(settings.anthropic_api_keys_list)
+        provider_name = "Anthropic"
+    elif is_groq:
+        key_count = len(settings.groq_api_keys_list)
+        provider_name = "Groq"
+    else:
+        key_count = len(settings.gemini_api_keys_list)
+        provider_name = "Gemini"
     has_multiple_keys = key_count > 1
 
     def build_request() -> tuple[str, dict, dict]:
+        if is_anthropic:
+            return _build_anthropic_request(
+                real_model, system_prompt=system_prompt, user_message=user_message, schema=schema, max_tokens=max_tokens,
+            )
         if is_groq:
             return _build_groq_request(
                 real_model, system_prompt=system_prompt, user_message=user_message, schema=schema, max_tokens=max_tokens,
@@ -471,7 +545,7 @@ async def _generate_with_model(
                 # key's backoff when another one is available immediately.
                 logger.warning(
                     "Rate limit hit on %s (attempt %d/%d) - rotating to next %s key",
-                    model, attempt + 1, _MAX_RATE_LIMIT_RETRIES + 1, "Groq" if is_groq else "Gemini",
+                    model, attempt + 1, _MAX_RATE_LIMIT_RETRIES + 1, provider_name,
                 )
                 continue
             delay = min(
@@ -493,7 +567,7 @@ async def _generate_with_model(
                 logger.warning(
                     "Server error %d on %s (attempt %d/%d) - rotating to next %s key",
                     resp.status_code, model, attempt + 1, _MAX_SERVER_ERROR_RETRIES + 1,
-                    "Groq" if is_groq else "Gemini",
+                    provider_name,
                 )
                 continue
             delay = _SERVER_ERROR_BACKOFF_SECONDS * (attempt + 1)
@@ -513,7 +587,12 @@ async def _generate(
     *, model: str, system_prompt: str, user_message: str, schema: StructuredSchema,
     max_tokens: int, thinking_budget: int | None,
 ) -> str:
-    models_to_try = [model] + [m for m in settings.AI_MODEL_FALLBACKS if m != model]
+    fallbacks = (
+        settings.ai_model_fallbacks_list
+        if hasattr(settings, "ai_model_fallbacks_list")
+        else (settings.AI_MODEL_FALLBACKS if isinstance(settings.AI_MODEL_FALLBACKS, list) else [m.strip() for m in settings.AI_MODEL_FALLBACKS.split(",") if m.strip()])
+    )
+    models_to_try = [model] + [m for m in fallbacks if m != model]
 
     async with httpx.AsyncClient(timeout=settings.AI_REQUEST_TIMEOUT_SECONDS) as client:
         for index, current_model in enumerate(models_to_try):
@@ -559,6 +638,9 @@ async def _generate(
         raise AIProviderError(f"{current_model} API error {resp.status_code}: {resp.text[:500]}")
 
     data = resp.json()
+    if _is_anthropic_model(current_model):
+        _check_for_block_anthropic(data)
+        return _extract_text_anthropic(data)
     if _is_groq_model(current_model):
         _check_for_block_groq(data)
         return _extract_text_groq(data)

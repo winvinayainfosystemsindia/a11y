@@ -44,38 +44,39 @@ class Settings(BaseSettings):
     DEFAULT_ADMIN_PASSWORD: str = "Testpass@123"
 
     # --- AI Audit Agent (Phase 2) ---
-    # Google Gemini API. Model IDs are configurable so they can be swapped
-    # without a code change; every AI stage defaults to the same model but can
-    # be pointed at a cheaper/faster one independently.
+    # Multi-provider support: Anthropic Claude, Google Gemini, Groq.
+    # Model IDs are configurable so they can be swapped without a code change;
+    # every AI stage defaults to the same model but can be pointed at a
+    # cheaper/faster one independently.
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_API_KEYS: str = ""
+    ANTHROPIC_BASE_URL: str = "https://api.anthropic.com/v1"
+
     # GEMINI_API_KEYS is comma-separated - llm_client rotates round-robin
     # across every key given, so a 429 on one account's quota fails over to
     # the next account's own quota immediately instead of waiting out the
-    # backoff. Multiple free-tier keys are what make Gemini viable as the
-    # only provider (see AI_MODEL_FALLBACKS below - Groq is no longer used).
+    # backoff.
     GEMINI_API_KEYS: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
-    # Groq (OpenAI-compatible chat/completions) support is still here in
-    # llm_client, but intentionally unused by default: its free-tier models
-    # cap prompt+completion tokens at 8000-12000 TPM, well under what a
-    # PLAN-sized prompt (a full page's accessibility tree) needs, so it kept
-    # 413-ing before ever helping with a Gemini quota/outage. Leave
-    # GROQ_API_KEYS unset and don't add a "groq/" model to AI_MODEL_FALLBACKS
-    # unless that's revisited.
+
     GROQ_API_KEYS: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    AI_MODEL_PLANNER: str = "gemini-3.5-flash-lite"
-    AI_MODEL_JUDGMENT: str = "gemini-3.5-flash-lite"
-    AI_MODEL_REFLECTION: str = "gemini-3.5-flash-lite"
+
+    AI_MODEL_PLANNER: str = "claude-sonnet-4-6"
+    AI_MODEL_JUDGMENT: str = "claude-sonnet-4-6"
+    AI_MODEL_REFLECTION: str = "claude-sonnet-4-6"
+
     # Tried in order, after the requested model, when a call keeps failing
     # with a quota (429) or overload (5xx) error even after that model's own
-    # retries (and, on 429, every rotated GEMINI_API_KEYS key) are exhausted -
-    # see llm_client._generate. All four GEMINI_API_KEYS are rotated across
-    # within each model before the chain advances to the next model.
-    AI_MODEL_FALLBACKS: List[str] = [
+    # retries are exhausted. Ordered: Claude -> Gemini -> Groq.
+    AI_MODEL_FALLBACKS: str | List[str] = [
+        "claude-sonnet-4-6",
         "gemini-3.5-flash-lite",
         "gemini-3-flash-preview",
         "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
+        "groq/llama-3.3-70b-versatile",
+        "groq/openai/gpt-oss-20b",
     ]
     AI_REQUEST_TIMEOUT_SECONDS: int = 120
     # Gemini's internal "thinking" tokens are drawn from the *same*
@@ -113,12 +114,23 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     @property
+    def anthropic_api_keys_list(self) -> List[str]:
+        keys = self.ANTHROPIC_API_KEYS or self.ANTHROPIC_API_KEY
+        return [key.strip() for key in keys.split(",") if key.strip()]
+
+    @property
     def gemini_api_keys_list(self) -> List[str]:
         return [key.strip() for key in self.GEMINI_API_KEYS.split(",") if key.strip()]
 
     @property
     def groq_api_keys_list(self) -> List[str]:
         return [key.strip() for key in self.GROQ_API_KEYS.split(",") if key.strip()]
+
+    @property
+    def ai_model_fallbacks_list(self) -> List[str]:
+        if isinstance(self.AI_MODEL_FALLBACKS, list):
+            return self.AI_MODEL_FALLBACKS
+        return [m.strip() for m in self.AI_MODEL_FALLBACKS.split(",") if m.strip()]
 
     @property
     def DATABASE_URL(self) -> str:
