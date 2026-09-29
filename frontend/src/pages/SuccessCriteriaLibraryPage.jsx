@@ -56,7 +56,7 @@ export default function SuccessCriteriaLibraryPage() {
           </Typography>
         </Stack>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          All {rows.length || 50} WCAG 2.0/2.1 Level A and AA success criteria, grouped by the four WCAG
+          All {rows.length || 56} WCAG 2.2 Level A and AA success criteria, grouped by the four WCAG
           principles (Perceivable, Operable, Understandable, Robust) - the master reference this platform's
           test cases are generated against.
         </Typography>

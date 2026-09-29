@@ -14,27 +14,27 @@ def test_requires_auth(client):
     assert resp.status_code == 401
 
 
-def test_returns_all_fifty_by_default(client):
+def test_returns_all_fifty_six_by_default(client):
     token = _signup_and_login(client)
     resp = client.get("/api/wcag/success-criteria", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     items = resp.json()["items"]
-    assert len(items) == 50
+    assert len(items) == 56
     first = items[0]
     assert set(first.keys()) == {
         "s_no", "sc_number", "name", "wcag_version", "level", "principle", "guideline", "description",
     }
-    assert [item["s_no"] for item in items] == list(range(1, 51))
+    assert [item["s_no"] for item in items] == list(range(1, 57))
 
 
-def test_level_a_filter_returns_thirty(client):
+def test_level_a_filter_returns_thirty_two(client):
     token = _signup_and_login(client)
     resp = client.get(
         "/api/wcag/success-criteria", params={"level": "A"}, headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status_code == 200
     items = resp.json()["items"]
-    assert len(items) == 30
+    assert len(items) == 32
     assert all(item["level"] == "A" for item in items)
 
 

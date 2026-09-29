@@ -8,15 +8,9 @@ from app.utils.wcag_criteria import (
     success_criteria_for_level,
 )
 
-_EXPECTED_21_CRITERIA = {
-    "1.3.4", "1.3.5", "1.4.10", "1.4.11", "1.4.12", "1.4.13",
-    "2.1.4", "2.5.1", "2.5.2", "2.5.3", "2.5.4", "4.1.3",
-}
-
-
-def test_all_success_criteria_has_exactly_fifty_rows():
+def test_all_success_criteria_has_fifty_six_rows():
     criteria = all_success_criteria()
-    assert len(criteria) == 50
+    assert len(criteria) == 56
 
 
 def test_no_duplicate_sc_numbers():
@@ -35,28 +29,24 @@ def test_every_row_has_required_fields_populated():
     for criterion in all_success_criteria():
         assert criterion.sc_number
         assert criterion.name
-        assert criterion.wcag_version in {"2.0", "2.1"}
+        assert criterion.wcag_version == "2.2"
         assert criterion.level in {"A", "AA"}
         assert criterion.guideline
         assert criterion.description
 
 
-def test_wcag_21_criteria_tagged_correctly():
-    by_id = {c.sc_number: c for c in all_success_criteria()}
-    for sc_id in _EXPECTED_21_CRITERIA:
-        assert by_id[sc_id].wcag_version == "2.1", f"{sc_id} should be tagged WCAG 2.1"
-    for sc_id, criterion in by_id.items():
-        if sc_id not in _EXPECTED_21_CRITERIA:
-            assert criterion.wcag_version == "2.0", f"{sc_id} should be tagged WCAG 2.0"
+def test_all_criteria_tagged_wcag_22():
+    for criterion in all_success_criteria():
+        assert criterion.wcag_version == "2.2", f"{criterion.sc_number} should have wcag_version='2.2'"
 
 
-def test_success_criteria_for_level_a_returns_thirty():
-    assert len(success_criteria_for_level("A")) == 30
+def test_success_criteria_for_level_a_returns_thirty_two():
+    assert len(success_criteria_for_level("A")) == 32
     assert all(c.level == "A" for c in success_criteria_for_level("A"))
 
 
-def test_success_criteria_for_level_aa_returns_all_fifty():
-    assert len(success_criteria_for_level("AA")) == 50
+def test_success_criteria_for_level_aa_returns_all_fifty_six():
+    assert len(success_criteria_for_level("AA")) == 56
 
 
 def test_principle_derived_from_leading_digit():

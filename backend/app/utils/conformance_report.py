@@ -69,11 +69,10 @@ _ENV_LINES = [
 # Standard/Guideline row label (matched by prefix against the table's own
 # first-column text, not a numeric row index - robust to the template
 # reordering its rows) -> corrected "Included In Report" cell text. This
-# platform only evaluates WCAG 2.0/2.1 Level A+AA (see app/utils/
-# wcag_criteria.py) - it must not claim WCAG 2.2 or the India-specific
-# BIS/GIGWA standards, which it never checks.
+# platform evaluates WCAG 2.0/2.1/2.2 Level A+AA (see app/utils/
+# wcag_criteria.py) - it must not claim the India-specific
+# BIS/GIGWA standards, which it does not evaluate.
 _STANDARDS_CORRECTIONS = {
-    "Web Content Accessibility Guidelines 2.2": "Not Evaluated",
     "BIS IS17802": "Not Evaluated",
     "GIGWA": "Not Evaluated",
 }

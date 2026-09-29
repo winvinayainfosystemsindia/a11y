@@ -235,7 +235,7 @@ def build_excel_report(results: dict) -> bytes:
 
     Sheet 1 "Defects"           -- failed / needs_review items with full defect columns.
     Sheet 2 "Test Cases"        -- all items including passed ones.
-    Sheet 3 "Success Criteria"  -- static reference: all 50 WCAG 2.0/2.1 A+AA criteria.
+    Sheet 3 "Success Criteria"  -- static reference: all 56 WCAG 2.0/2.1/2.2 A+AA criteria.
     """
     wb = Workbook()
 

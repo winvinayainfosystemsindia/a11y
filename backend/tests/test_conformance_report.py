@@ -101,24 +101,23 @@ def test_produces_exactly_three_tables(generated_doc):
     assert len(generated_doc.tables) == 3
 
 
-def test_level_a_table_has_all_30_criteria(generated_doc):
+def test_level_a_table_has_all_32_criteria(generated_doc):
     table = generated_doc.tables[1]
-    assert len(table.rows) - 1 == len(WCAG_LEVEL_A) == 30
+    assert len(table.rows) - 1 == len(WCAG_LEVEL_A) == 32
 
 
-def test_level_aa_table_has_all_20_criteria(generated_doc):
+def test_level_aa_table_has_all_24_criteria(generated_doc):
     table = generated_doc.tables[2]
-    assert len(table.rows) - 1 == len(WCAG_LEVEL_AA_ADDITIONAL) == 20
+    assert len(table.rows) - 1 == len(WCAG_LEVEL_AA_ADDITIONAL) == 24
 
 
 def test_standards_table_does_not_falsely_claim_untested_standards(generated_doc):
-    """This platform only evaluates WCAG 2.0/2.1 A+AA - it must never claim
-    WCAG 2.2 or the India-specific BIS/GIGWA standards were checked."""
+    """This platform evaluates WCAG 2.0/2.1/2.2 A+AA - it must never claim
+    India-specific BIS/GIGWA standards were checked."""
     table = generated_doc.tables[0]
     by_label = {row.cells[0].text.strip(): row.cells[1].text.strip() for row in table.rows[1:]}
     assert "Yes" in by_label["Web Content Accessibility Guidelines 2.0"] or "Level A" in by_label[
         "Web Content Accessibility Guidelines 2.0"]
-    assert by_label["Web Content Accessibility Guidelines 2.2"] == "Not Evaluated"
     assert by_label["BIS IS17802"] == "Not Evaluated"
     assert by_label["GIGWA 3.0"] == "Not Evaluated"
 

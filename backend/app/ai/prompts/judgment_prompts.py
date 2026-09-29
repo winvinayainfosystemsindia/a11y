@@ -159,6 +159,55 @@ def table_semantics_question(table_summary: str) -> str:
     )
 
 
+def focus_not_obscured_question(component_description: str, context: str) -> str:
+    return (
+        f"For this interactive element ({component_description}), when it receives keyboard focus, is it "
+        "completely hidden or obscured by sticky headers, sticky footers, floating banners, cookie dialogs, "
+        f"or other author-created overlays per WCAG 2.4.11 Focus Not Obscured (Minimum)? Context: {context}"
+    )
+
+
+def accessible_auth_question(auth_step_description: str, context: str) -> str:
+    return (
+        f"In this authentication / login process ({auth_step_description}), does any step require a cognitive "
+        "function test (such as remembering a password without paste support, solving a CAPTCHA/puzzle, or "
+        "memorizing characters) without providing an accessible alternative (e.g. password manager / paste support, "
+        f"email magic link, WebAuthn/passkey, or object recognition with alternatives) per WCAG 3.3.8? Context: {context}"
+    )
+
+
+def redundant_entry_question(field_description: str, process_context: str) -> str:
+    return (
+        f"For this form field ({field_description}), is information that the user previously entered in the same "
+        "multi-step process required to be typed again manually, instead of being auto-populated or selectable "
+        f"per WCAG 3.3.7 Redundant Entry? Context: {process_context}"
+    )
+
+
+def consistent_help_question(help_description: str, page_context: str) -> str:
+    return (
+        f"If this page provides access to help or support mechanisms ({help_description}, e.g. contact details, "
+        "support form, chatbot, or FAQ link), is the mechanism presented in a consistent relative location/order "
+        f"compared to other pages in the site per WCAG 3.2.6 Consistent Help? Context: {page_context}"
+    )
+
+
+def dragging_movements_question(interaction_description: str, context: str) -> str:
+    return (
+        f"For this functionality ({interaction_description}), does it require a dragging movement (such as drag-and-drop "
+        "sorting, sliders, or reordering) without offering a single-pointer non-dragging alternative (e.g. up/down buttons, "
+        f"click-to-move, or keyboard controls) per WCAG 2.5.7 Dragging Movements? Context: {context}"
+    )
+
+
+def target_size_question(target_description: str, dimensions: str) -> str:
+    return (
+        f"For this clickable/interactive target ({target_description}), is the pointer target area smaller than "
+        f"24x24 CSS pixels ({dimensions or 'unspecified'}) without sufficient spacing to adjacent targets per "
+        "WCAG 2.5.8 Target Size (Minimum)?"
+    )
+
+
 def generic_question(wcag_criterion: str, description: str) -> str:
     return (
         f"Evaluate whether this page element satisfies WCAG {wcag_criterion}, specifically considering whether "
@@ -194,6 +243,18 @@ JUDGMENT_KIND_DESCRIPTIONS: dict[str, str] = {
     "(WCAG 1.3.3, 1.4.1). target_element: {instruction_text, context}.",
     "table_semantics": "A data table whose header-to-cell association may be missing or incorrect (WCAG 1.3.1). "
     "target_element: {table_summary} (or use description).",
+    "focus_not_obscured": "When focused, an element may be hidden by sticky headers/banners (WCAG 2.4.11). "
+    "target_element: {description, context}.",
+    "accessible_authentication": "Login/auth step may require a cognitive function test without paste/alternative (WCAG 3.3.8). "
+    "target_element: {description, context}.",
+    "redundant_entry": "Repeated entry of previously submitted info in a process (WCAG 3.3.7). "
+    "target_element: {description, context}.",
+    "consistent_help": "Help mechanisms (contact info, chat, FAQ) relative placement across pages (WCAG 3.2.6). "
+    "target_element: {description, context}.",
+    "dragging_movements": "Drag-and-drop or slider interaction lacking single-click alternative (WCAG 2.5.7). "
+    "target_element: {description, context}.",
+    "target_size": "Interactive target smaller than 24x24 CSS pixels without spacing (WCAG 2.5.8). "
+    "target_element: {description, dimensions}.",
 }
 
 
@@ -235,4 +296,34 @@ def build_question(*, judgment_kind: str | None, wcag_criterion: str, target_ele
         )
     if judgment_kind == "table_semantics":
         return table_semantics_question(target_element.get("table_summary") or target_element.get("description", ""))
+    if judgment_kind == "focus_not_obscured":
+        return focus_not_obscured_question(
+            target_element.get("description") or target_element.get("selector", "this element"),
+            target_element.get("context", ""),
+        )
+    if judgment_kind == "accessible_authentication":
+        return accessible_auth_question(
+            target_element.get("description") or "authentication step",
+            target_element.get("context", ""),
+        )
+    if judgment_kind == "redundant_entry":
+        return redundant_entry_question(
+            target_element.get("description") or "this form field",
+            target_element.get("context", ""),
+        )
+    if judgment_kind == "consistent_help":
+        return consistent_help_question(
+            target_element.get("description") or "help mechanism",
+            target_element.get("context", ""),
+        )
+    if judgment_kind == "dragging_movements":
+        return dragging_movements_question(
+            target_element.get("description") or "this interactive component",
+            target_element.get("context", ""),
+        )
+    if judgment_kind == "target_size":
+        return target_size_question(
+            target_element.get("description") or target_element.get("selector", "target"),
+            target_element.get("dimensions", ""),
+        )
     return generic_question(wcag_criterion, target_element.get("description", ""))
